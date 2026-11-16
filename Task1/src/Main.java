@@ -6,9 +6,9 @@ class Dispatcher implements Runnable {
     // tasks not arrived yet (null once moved to queue)
     public Task[] arrivals;
     // the ready queue
-    public Task[] queueHere;
+    public static Task[] queueHere;
     // number of tasks currently in queueHere
-    public int queueCount;
+    public static int queueCount;
 
     // MUTEX!!!!!!!!!!!!!!! YAY
     public Semaphore queueMutex = new Semaphore(1);
@@ -20,17 +20,21 @@ class Dispatcher implements Runnable {
 
     //random alogrithm enumerator
     public algorithms algo;
-    public int tasksRemain;
+    public static int tasksRemain;
     public int roundRobinQuantum;
 
-    Dispatcher(algorithms algo, int roundRobinQuantum, Task[] queueHere, int queueCount, Task[] arrivals, Core theCore, int T) {
+    Dispatcher(algorithms algo, int roundRobinQuantum, Task[] queueH, int queueC, Task[] arrivals, Core theCore, int T) {
         this.algo = algo;
         this.roundRobinQuantum = roundRobinQuantum;
-        this.queueHere = queueHere;
-        this.queueCount = queueCount;
+        queueHere = queueH;
+        queueCount = queueC;
         this.arrivals = arrivals;
         this.theCore = theCore;
-        this.tasksRemain = T;
+        if(tasksRemain==0)
+        {
+            tasksRemain = T;
+        }
+
     }
 
     public void run() {
@@ -147,7 +151,6 @@ class Dispatcher implements Runnable {
                     burst = task.remaining;
                 }
                 else {
-                    theCore.finished = true;
                     break;
                 }
                 System.out.println();
@@ -168,17 +171,17 @@ class Dispatcher implements Runnable {
         theCore.finished = true;
 
         // wakes up core
-        theCore.coreStart.release();
     }
 }
 
 // the setter of all time basically
 class Core implements Runnable {
     public Task theTaskAtHand;
+    public Task theTask;
     public int allotedBurstTime;
     public int coreNum;
     public volatile int internalClock = 0;
-    public volatile static boolean finished = false;
+    public volatile boolean finished = false;
     public Semaphore coreStart = new Semaphore(0);
 
     Core(int coreNum) {
@@ -191,7 +194,7 @@ class Core implements Runnable {
                 if (!coreStart.tryAcquire()) {
                     continue;
                 }
-                Task theTask = theTaskAtHand;
+                theTask = theTaskAtHand;
                 theTask.allotedCPU = allotedBurstTime;
                 System.out.println(theTask.taskID+" "+coreNum);
                 theTask.taskStart.release();
