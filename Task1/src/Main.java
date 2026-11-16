@@ -26,13 +26,21 @@ class Dispatcher implements Runnable {
     Dispatcher(algorithms algo, int roundRobinQuantum, Task[] queueH, int queueC, Task[] arrivals, Core theCore, int T) {
         this.algo = algo;
         this.roundRobinQuantum = roundRobinQuantum;
-        queueHere = queueH;
+
         queueCount = queueC;
         this.arrivals = arrivals;
         this.theCore = theCore;
         if(tasksRemain==0)
         {
             tasksRemain = T;
+        }
+        if(queueHere==null)
+        {
+            queueHere = queueH;
+        }
+        if(queueCount==0)
+        {
+            queueCount = queueC;
         }
 
     }
@@ -55,6 +63,7 @@ class Dispatcher implements Runnable {
 
         try {
             while (tasksRemain>0) {
+
                 // waits until core finishes (first time it goes through cause of main)
                 Main.waitSemaphoreForDispatch[theCore.coreNum-1].acquire();
 
@@ -194,6 +203,10 @@ class Core implements Runnable {
                 if (!coreStart.tryAcquire()) {
                     continue;
                 }
+                if (Dispatcher.tasksRemain==0)
+                {
+                    break;
+                }
                 theTask = theTaskAtHand;
                 theTask.allotedCPU = allotedBurstTime;
                 System.out.println(theTask.taskID+" "+coreNum);
@@ -234,9 +247,9 @@ class Task implements Runnable {
 
     public void run() {
         try {
-            taskStart.acquire();
-            while (remaining > 0) {
 
+            while (remaining > 0) {
+                taskStart.acquire();
 
                 // this has to wait till core releases this specific tasks start semaphore
 
@@ -255,9 +268,9 @@ class Task implements Runnable {
                     System.out.println("Proc. Thread " + taskID + (taskID < 10 ? "  " : " ") + "| Using CPU "+Thread.currentThread()+"; On burst " + (cb + i) + ".");
                 }
                 // waking up the core
-
+                taskFinished.release();
             }
-            taskFinished.release();
+
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -287,7 +300,7 @@ public class Main {
     public static Semaphore[] waitSemaphoreForDispatch;
     public static void main(String[] args) throws Exception {
         int coreCount=4;
-        algorithms algo = algorithms.values()[0];
+        algorithms algo = algorithms.values()[1];
         int quantumArg = 2;
         try {
             if (args[0].equals("-S")) {
