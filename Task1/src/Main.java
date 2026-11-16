@@ -17,44 +17,42 @@ class Dispatcher implements Runnable {
     public Core theCore;
 
     //core releases when task finish and dispatch waits on it to wake it up
-    public Semaphore waitSemaphoreForDispatch;
 
     //random alogrithm enumerator
     public algorithms algo;
     public int tasksRemain;
     public int roundRobinQuantum;
 
-    Dispatcher(algorithms algo, int roundRobinQuantum, Task[] queueHere, int queueCount, Task[] arrivals, Core theCore, Semaphore waitSemaphoreForDispatch, int T) {
+    Dispatcher(algorithms algo, int roundRobinQuantum, Task[] queueHere, int queueCount, Task[] arrivals, Core theCore, int T) {
         this.algo = algo;
         this.roundRobinQuantum = roundRobinQuantum;
         this.queueHere = queueHere;
         this.queueCount = queueCount;
         this.arrivals = arrivals;
         this.theCore = theCore;
-        this.waitSemaphoreForDispatch = waitSemaphoreForDispatch;
         this.tasksRemain = T;
     }
 
     public void run() {
-        System.out.println("Dispatcher 0    | Using CPU 0");
-        System.out.println("Dispatcher 0    | Now releasing dispatchers.");
+        System.out.println("Dispatcher "+theCore.coreNum+"    | Using CPU "+theCore.coreNum);
+        System.out.println("Dispatcher "+theCore.coreNum+"    | Now releasing dispatchers.");
         System.out.println();
         if (algo == algorithms.RR) {
-            System.out.println("Dispatcher 0    | Running RR algorithm, Time Quantum = " + roundRobinQuantum);
+            System.out.println("Dispatcher "+theCore.coreNum+"    | Running RR algorithm, Time Quantum = " + roundRobinQuantum);
         }
         else if (algo == algorithms.FCFS) {
-            System.out.println("Dispatcher 0    | Running FCFS algorithm");
+            System.out.println("Dispatcher "+theCore.coreNum+"    | Running FCFS algorithm");
         }
         else {
-            System.out.println("Dispatcher 0    | Running " + algo);
+            System.out.println("Dispatcher "+theCore.coreNum+"    | Running " + algo);
         }
 
         Task last = null;
 
         try {
-            while (true) {
+            while (tasksRemain>0) {
                 // waits until core finishes (first time it goes through cause of main)
-                waitSemaphoreForDispatch.acquire();
+                Main.waitSemaphoreForDispatch[theCore.coreNum-1].acquire();
 
                 //mutex block
                 queueMutex.acquire();
@@ -108,7 +106,7 @@ class Dispatcher implements Runnable {
                     theCore.internalClock = nextArrival;
                     last = null;
                     queueMutex.release();
-                    waitSemaphoreForDispatch.release();
+                    Main.waitSemaphoreForDispatch[theCore.coreNum-1].release();
                     continue;
                 }
 
@@ -133,28 +131,32 @@ class Dispatcher implements Runnable {
                 queueHere[queueCount] = null;
                 queueMutex.release();
 
-                // burst just decide how long it runs
-                int burst;
 
-                if (algo == algorithms.PSJF && nextArrival != Integer.MAX_VALUE) {
+
+                // burst just decide how long it runs
+                int burst=0;
+
+                if (algo == algorithms.PSJF && nextArrival != Integer.MAX_VALUE && task!=null) {
                     // this runs until done or until the next arrival, which may [pre-empt]
                     burst = Math.min(task.remaining, nextArrival - theCore.internalClock);
                 }
-                else if (algo == algorithms.RR) {
+                else if (algo == algorithms.RR && task!=null) {
                     burst = Math.min(roundRobinQuantum, task.remaining);
                 }
-                else {
+                else if (task!=null){
                     burst = task.remaining;
                 }
-
+                else {
+                    theCore.finished = true;
+                    break;
+                }
                 System.out.println();
-                System.out.println("Dispatcher 0    | Running process " + task.taskID);
+                System.out.println("Dispatcher "+theCore.coreNum+"    | Running process " + task.taskID);
 
                 //reads the next new task and alloted burst time after the semaphore is returned to it
                 theCore.theTaskAtHand = task;
                 theCore.allotedBurstTime = burst;
                 last = task;
-
                 //core is waken up which activates task being woken up laters
                 theCore.coreStart.release();
             }
@@ -174,27 +176,28 @@ class Dispatcher implements Runnable {
 class Core implements Runnable {
     public Task theTaskAtHand;
     public int allotedBurstTime;
+    public int coreNum;
     public volatile int internalClock = 0;
-    public volatile boolean finished = false;
+    public volatile static boolean finished = false;
     public Semaphore coreStart = new Semaphore(0);
-    public Semaphore waitSemaphoreForDispatch;
 
-    Core(Semaphore waitSemaphoreForDispatch) {
-        this.waitSemaphoreForDispatch = waitSemaphoreForDispatch;
+    Core(int coreNum) {
+        this.coreNum = coreNum;
     }
 
     public void run() {
         try {
             while (!finished) {
-                coreStart.acquire();
-                if (finished) {
-                    break;
+                if (!coreStart.tryAcquire()) {
+                    continue;
                 }
-                theTaskAtHand.allotedCPU = allotedBurstTime;
-                theTaskAtHand.taskStart.release();
-                theTaskAtHand.taskFinished.acquire();
+                Task theTask = theTaskAtHand;
+                theTask.allotedCPU = allotedBurstTime;
+                System.out.println(theTask.taskID+" "+coreNum);
+                theTask.taskStart.release();
+                theTask.taskFinished.acquire();
                 internalClock = internalClock + allotedBurstTime;
-                waitSemaphoreForDispatch.release();
+                Main.waitSemaphoreForDispatch[coreNum-1].release();
             }
         } catch (InterruptedException e) {
             e.printStackTrace();
@@ -228,11 +231,11 @@ class Task implements Runnable {
 
     public void run() {
         try {
+            taskStart.acquire();
             while (remaining > 0) {
 
 
                 // this has to wait till core releases this specific tasks start semaphore
-                taskStart.acquire();
 
 
                 //current burst
@@ -246,11 +249,12 @@ class Task implements Runnable {
                 for (int i = 1; i <= allotedCPU; i++) {
 
                     remaining--;
-                    System.out.println("Proc. Thread " + taskID + (taskID < 10 ? "  " : " ") + "| Using CPU 0; On burst " + (cb + i) + ".");
+                    System.out.println("Proc. Thread " + taskID + (taskID < 10 ? "  " : " ") + "| Using CPU "+Thread.currentThread()+"; On burst " + (cb + i) + ".");
                 }
                 // waking up the core
-                taskFinished.release();
+
             }
+            taskFinished.release();
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -276,12 +280,21 @@ enum algorithms {
 }
 
 public class Main {
-    public static void main(String[] args) throws InterruptedException {
-        algorithms algo;
+    public static Task[] tasks;
+    public static Semaphore[] waitSemaphoreForDispatch;
+    public static void main(String[] args) throws Exception {
+        int coreCount=4;
+        algorithms algo = algorithms.values()[0];
         int quantumArg = 2;
         try {
             if (args[0].equals("-S")) {
                 algo = algorithms.values()[Integer.parseInt(args[1]) - 1];
+            }
+            else if(args[0].equals("-C")){
+                coreCount = Integer.parseInt(args[1]);
+                if(args[2].equals("-S")){
+
+                }
             }
             else {
                 algo = algorithms.valueOf(args[0].toUpperCase());
@@ -289,7 +302,7 @@ public class Main {
             }
         }
         catch (Exception e) {
-            return;
+            System.out.println("Invalid input; quitting program.");
         }
         int roundRobinQuantum = 4;
         if (args.length > quantumArg) {
@@ -315,10 +328,10 @@ public class Main {
         }
 
         // dispatcher acquires this semaphore on its first run and core just keeps releasing it later as a wakeup call
-        Semaphore waitSemaphoreForDispatch = new Semaphore(1);
+
 
         //drools all over the arrays
-        Task[] tasks = new Task[T];
+        tasks = new Task[T];
         Task[] arrivals = new Task[T];
         Task[] queueHere = new Task[T];
         int queueCount = 0;
@@ -355,24 +368,37 @@ public class Main {
 
         System.out.println();
 
+        waitSemaphoreForDispatch=new Semaphore[coreCount];
+        Core[] theCores = new Core[coreCount];
+        Thread[] dispatcherThread = new Thread[coreCount];
+        Thread[] coreThread = new Thread[coreCount];
+        for(int i=0; i<coreCount; i++)
+        {
+            waitSemaphoreForDispatch[i] = new Semaphore(1);
+            theCores[i] = new Core(i+1);
+            coreThread[i] = new Thread(theCores[i]);
+            coreThread[i].start();
+            Dispatcher dispatcher = new Dispatcher(algo, roundRobinQuantum, queueHere, queueCount, arrivals, theCores[i], T);
+            dispatcherThread[i] = new Thread(dispatcher);
+            dispatcherThread[i].start();
+        }
+
         // core and dispatch are sharing the waitsempahorefordispatch cause core has to wake up dispatch
-        Core theCore = new Core(waitSemaphoreForDispatch);
 
-        Dispatcher dispatcher = new Dispatcher(algo, roundRobinQuantum, queueHere, queueCount, arrivals, theCore, waitSemaphoreForDispatch, T);
-        Thread coreThread = new Thread(theCore);
 
-        Thread dispatcherThread = new Thread(dispatcher);
 
-        System.out.println("Main thread     | Forking dispatcher 0");
 
-        coreThread.start();
 
-        dispatcherThread.start();
+        System.out.println("Main thread     | Forking dispatchers");
 
-        dispatcherThread.join();
-        coreThread.join();
         for (int i = 0; i < T; i++) {
             threads[i].join();
+        }
+
+        for(int i=0; i<coreCount; i++)
+        {
+            coreThread[i].join();
+            dispatcherThread[i].join();
         }
         System.out.println();
         System.out.println("Main thread     | Exiting.");
